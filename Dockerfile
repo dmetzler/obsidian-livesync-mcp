@@ -1,10 +1,7 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
-RUN apk add --no-cache git
-COPY .gitmodules ./
 COPY . .
-RUN git submodule update --init && rm -rf .git
 RUN npm ci && npm run build
 
 FROM node:22-alpine
