@@ -20,7 +20,9 @@ export interface FileInfo {
 
 export interface SearchResult {
   path: string;
-  content: string;
+  snippet: string;
+  matchType: "filename" | "content";
+  totalMatches: number;
 }
 
 export interface CouchDBOptions {
@@ -49,12 +51,35 @@ export class CouchDBClient {
   private passphrase: string | undefined;
   private cacheTtl: number;
   private requestTimeout: number;
+  private _pbkdf2Salt: Uint8Array | null = null;
 
   constructor(url: string, passphrase?: string, options?: CouchDBOptions) {
     this.db = new PouchDB(url, { adapter: "http" });
     this.passphrase = passphrase;
     this.cacheTtl = options?.cacheTtl ?? 60;
     this.requestTimeout = options?.requestTimeout ?? 30000;
+  }
+
+  private async getPbkdf2Salt(): Promise<Uint8Array> {
+    if (this._pbkdf2Salt) return this._pbkdf2Salt;
+    try {
+      const doc = await this.retry(() =>
+        this.db.get<any>("_local/obsidian_livesync_sync_parameters"),
+      );
+      if (doc?.pbkdf2salt) {
+        this._pbkdf2Salt = new Uint8Array(
+          Buffer.from(doc.pbkdf2salt, "base64").buffer,
+          Buffer.from(doc.pbkdf2salt, "base64").byteOffset,
+          Buffer.from(doc.pbkdf2salt, "base64").byteLength,
+        );
+        return this._pbkdf2Salt;
+      }
+    } catch {
+      // fall through to default
+    }
+    const hash = crypto.createHash("sha256").update(this.passphrase || "").digest();
+    this._pbkdf2Salt = new Uint8Array(hash.buffer, hash.byteOffset, hash.byteLength);
+    return this._pbkdf2Salt;
   }
 
   async listFiles(prefix?: string): Promise<FileInfo[]> {
@@ -219,11 +244,18 @@ export class CouchDBClient {
     }
   }
 
-  async search(query: string): Promise<SearchResult[]> {
+  async search(query: string): Promise<{
+    results: SearchResult[];
+    truncated: boolean;
+    totalCandidateCount: number;
+  }> {
     const allDocs = await this.retry(() => this.db.allDocs<any>({ include_docs: true }));
 
+    const MAX_RESULTS = 20;
+    const SNIPPET_LENGTH = 300;
     const results: SearchResult[] = [];
     const lowerQuery = query.toLowerCase();
+    let candidateCount = 0;
 
     for (const row of allDocs.rows) {
       if (!("doc" in row) || !row.doc || row.doc._deleted || row.doc.deleted) continue;
@@ -233,22 +265,59 @@ export class CouchDBClient {
       const filePath = await this.resolvePath(doc);
       if (!filePath) continue;
 
-      if (!filePath.toLowerCase().includes(lowerQuery)) continue;
+      let content: string | null;
+      try {
+        content = await this.getFileContent(filePath);
+      } catch {
+        continue;
+      }
+      if (content === null) continue;
 
-      const content = await this.getFileContent(filePath);
-      if (content !== null) {
-        results.push({ path: filePath, content });
+      const fileNameMatch = filePath.toLowerCase().includes(lowerQuery);
+      if (fileNameMatch) {
+        candidateCount++;
+        if (results.length >= MAX_RESULTS) continue;
+        results.push({
+          path: filePath,
+          snippet: content.slice(0, SNIPPET_LENGTH).replace(/\n/g, " "),
+          matchType: "filename",
+          totalMatches: 0,
+        });
+        continue;
+      }
+
+      const contentLines = content.split("\n");
+      let contentMatch = false;
+      let matchCount = 0;
+      let firstSnippet = "";
+
+      for (let i = 0; i < contentLines.length; i++) {
+        if (contentLines[i].toLowerCase().includes(lowerQuery)) {
+          matchCount++;
+          if (!contentMatch) {
+            contentMatch = true;
+            firstSnippet = contentLines.slice(Math.max(0, i - 1), i + 3).join("\n").slice(0, SNIPPET_LENGTH);
+          }
+        }
+      }
+
+      if (contentMatch) {
+        candidateCount++;
+        if (results.length >= MAX_RESULTS) continue;
+        results.push({
+          path: filePath,
+          snippet: firstSnippet.replace(/\n/g, " "),
+          matchType: "content",
+          totalMatches: matchCount,
+        });
       }
     }
-    return results;
-  }
 
-  private get pbkdf2Salt(): Uint8Array<ArrayBuffer> {
-    const hash = crypto
-      .createHash("sha256")
-      .update(this.passphrase || "")
-      .digest();
-    return new Uint8Array(hash.buffer, hash.byteOffset, hash.byteLength) as Uint8Array<ArrayBuffer>;
+    return {
+      results,
+      truncated: candidateCount > MAX_RESULTS,
+      totalCandidateCount: candidateCount,
+    };
   }
 
   private async decryptData(data: string, docId: string): Promise<string> {
@@ -256,7 +325,8 @@ export class CouchDBClient {
 
     if (isEncryptedChunkId(docId) || data.startsWith(ENCRYPT_HKDF_HEADER)) {
       try {
-        return await decryptHKDF(data, this.passphrase, this.pbkdf2Salt);
+        const salt = await this.getPbkdf2Salt();
+        return await decryptHKDF(data, this.passphrase, salt);
       } catch {
         // fallback to V1
       }
@@ -274,7 +344,8 @@ export class CouchDBClient {
   }
 
   private async encryptData(data: string): Promise<string> {
-    return await encryptHKDF(data, this.passphrase!, this.pbkdf2Salt);
+    const salt = await this.getPbkdf2Salt();
+    return await encryptHKDF(data, this.passphrase!, salt);
   }
 
   private async resolvePath(doc: any): Promise<string | null> {
@@ -282,7 +353,8 @@ export class CouchDBClient {
     if (isEncryptedMetaPath(filePath) && this.passphrase) {
       try {
         const encrypted = filePath.slice(ENCRYPTED_META_PREFIX.length);
-        const decrypted = await decryptHKDF(encrypted, this.passphrase + SALT_OF_PASSPHRASE, this.pbkdf2Salt);
+        const salt = await this.getPbkdf2Salt();
+        const decrypted = await decryptHKDF(encrypted, this.passphrase + SALT_OF_PASSPHRASE, salt);
         const parsed = JSON.parse(decrypted);
         filePath = parsed.path;
       } catch {

@@ -47,11 +47,11 @@ const ALL_TOOLS: Tool[] = [
   },
   {
     name: "search",
-    description: "Search file contents by query string",
+    description: "Search file names and contents by query string. Returns up to 20 results with snippets. Searches both file paths and content.",
     inputSchema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Search query" },
+        query: { type: "string", description: "Search query (case-insensitive, matched against filename and content)" },
       },
       required: ["query"],
     },
@@ -169,8 +169,25 @@ export class MCPServer {
 
           case "search": {
             const query = args?.query as string;
-            const results = await this.client.search(query);
-            result = { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+            const searchResult = await this.client.search(query);
+            const lines: string[] = [];
+            if (searchResult.results.length === 0) {
+              lines.push("No matches found.");
+            } else {
+              for (const r of searchResult.results) {
+                const tag = r.matchType === "filename" ? "filename" : "content";
+                lines.push(`[${tag}] ${r.path}`);
+                if (r.matchType === "content") {
+                  lines.push(`       ${r.totalMatches} match(es) — snippet: ${r.snippet}`);
+                } else {
+                  lines.push(`       ${r.snippet}`);
+                }
+              }
+              if (searchResult.truncated) {
+                lines.push(`\n(${searchResult.totalCandidateCount} total candidates — results truncated to ${searchResult.results.length})`);
+              }
+            }
+            result = { content: [{ type: "text", text: lines.join("\n") }] };
             break;
           }
 
