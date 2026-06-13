@@ -65,7 +65,7 @@ flowchart TB
     LS <-->|HTTP / WS| Couch
     Tools <--> Crypto
     Crypto <-->|PouchDB HTTP adapter<br/>+ transparent decrypt/encrypt| Couch
-    Clients <-->|MCP<br/>stdio (local) or<br/>streamable-http (remote)| Tools
+    Clients <-->|MCP (stdio / streamable-http)| Tools
 ```
 
 **Key points**:
@@ -563,3 +563,7 @@ When working on the MCP tools themselves, remember that every change affects rea
 **Star the repo if this unlocks new AI + Obsidian workflows for you!**
 
 Questions? Open a GitHub issue or discussion.
+
+---
+
+*Built with AI assistance.*
