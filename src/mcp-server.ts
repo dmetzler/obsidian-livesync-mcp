@@ -47,7 +47,8 @@ const ALL_TOOLS: Tool[] = [
   },
   {
     name: "search",
-    description: "Search file names and contents by query string. Returns up to 20 results with snippets. Searches both file paths and content.",
+    description:
+      "Search file names and contents by query string. Returns up to 20 results with snippets. Searches both file paths and content.",
     inputSchema: {
       type: "object",
       properties: {
@@ -196,7 +197,9 @@ export class MCPServer {
                 }
               }
               if (searchResult.truncated) {
-                lines.push(`\n(${searchResult.totalCandidateCount} total candidates — results truncated to ${searchResult.results.length})`);
+                lines.push(
+                  `\n(${searchResult.totalCandidateCount} total candidates — results truncated to ${searchResult.results.length})`,
+                );
               }
             }
             result = { content: [{ type: "text", text: lines.join("\n") }] };
@@ -319,9 +322,7 @@ export class MCPServer {
       await this.server.connect(stdioTransport);
       this.opts.logger.info("Server started", { transport: "stdio" });
     } else {
-      const { StreamableHTTPServerTransport } = await import(
-        "@modelcontextprotocol/sdk/server/streamableHttp.js"
-      );
+      const { StreamableHTTPServerTransport } = await import("@modelcontextprotocol/sdk/server/streamableHttp.js");
       const { createServer } = await import("node:http");
       const crypto = await import("node:crypto");
 

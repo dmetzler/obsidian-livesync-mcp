@@ -16,9 +16,7 @@ const log = new Logger("main");
 
 const protocol = config.hostname.startsWith("https://") ? "https" : "http";
 const baseHost = config.hostname.replace(/^https?:\/\//, "");
-const credentials = config.username
-  ? `${config.username}:${encodeURIComponent(config.password)}@`
-  : "";
+const credentials = config.username ? `${config.username}:${encodeURIComponent(config.password)}@` : "";
 const url = `${protocol}://${credentials}${baseHost}/${config.dbname}`;
 const healthCouchdbUrl = `${protocol}://${baseHost}`;
 

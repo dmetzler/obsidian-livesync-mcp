@@ -10,10 +10,7 @@ export interface HealthStatus {
 
 const startTime = Date.now();
 
-export async function checkHealth(
-  couchdbBaseUrl: string,
-  logger: Logger
-): Promise<HealthStatus> {
+export async function checkHealth(couchdbBaseUrl: string, logger: Logger): Promise<HealthStatus> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);

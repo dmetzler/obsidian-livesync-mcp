@@ -8,7 +8,10 @@ const mockDbInstance: any = {
 };
 
 vi.mock("pouchdb", () => ({
-  default: Object.assign(vi.fn(() => mockDbInstance), { plugin: vi.fn() }),
+  default: Object.assign(
+    vi.fn(() => mockDbInstance),
+    { plugin: vi.fn() },
+  ),
   __esModule: true,
 }));
 
