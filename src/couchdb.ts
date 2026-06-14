@@ -169,16 +169,18 @@ export class CouchDBClient {
         chunkData = await this.encryptData(content);
       }
 
+      const chunkBody: Record<string, any> = {
+        _id: chunkId,
+        type: EntryTypes.CHUNK,
+        data: chunkData,
+      };
+      if (this.passphrase) {
+        chunkBody.e_ = true;
+      }
       try {
         await this.retry(() => this.db.get(chunkId));
       } catch {
-        await this.retry(() =>
-          this.db.put({
-            _id: chunkId,
-            type: EntryTypes.CHUNK,
-            data: chunkData,
-          }),
-        );
+        await this.retry(() => this.db.put(chunkBody));
       }
 
       let storeCtime = Date.now();
@@ -193,7 +195,7 @@ export class CouchDBClient {
         children: [chunkId],
         ctime: storeCtime,
         mtime: Date.now(),
-        size: content.length,
+        size: new Blob([content]).size,
       };
 
       if (existingMeta) {
