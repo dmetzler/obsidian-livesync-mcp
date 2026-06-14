@@ -51,7 +51,7 @@ export class CouchDBClient {
   private passphrase: string | undefined;
   private cacheTtl: number;
   private requestTimeout: number;
-  private _pbkdf2Salt: Uint8Array | null = null;
+  private _pbkdf2Salt: Uint8Array<ArrayBuffer> | null = null;
 
   constructor(url: string, passphrase?: string, options?: CouchDBOptions) {
     this.db = new PouchDB(url, { adapter: "http" });
@@ -60,25 +60,21 @@ export class CouchDBClient {
     this.requestTimeout = options?.requestTimeout ?? 30000;
   }
 
-  private async getPbkdf2Salt(): Promise<Uint8Array> {
+  private async getPbkdf2Salt(): Promise<Uint8Array<ArrayBuffer>> {
     if (this._pbkdf2Salt) return this._pbkdf2Salt;
     try {
       const doc = await this.retry(() =>
         this.db.get<any>("_local/obsidian_livesync_sync_parameters"),
       );
       if (doc?.pbkdf2salt) {
-        this._pbkdf2Salt = new Uint8Array(
-          Buffer.from(doc.pbkdf2salt, "base64").buffer,
-          Buffer.from(doc.pbkdf2salt, "base64").byteOffset,
-          Buffer.from(doc.pbkdf2salt, "base64").byteLength,
-        );
+        const buf = Buffer.from(doc.pbkdf2salt, "base64");
+        this._pbkdf2Salt = Uint8Array.from(buf);
         return this._pbkdf2Salt;
       }
     } catch {
       // fall through to default
     }
-    const hash = crypto.createHash("sha256").update(this.passphrase || "").digest();
-    this._pbkdf2Salt = new Uint8Array(hash.buffer, hash.byteOffset, hash.byteLength);
+    this._pbkdf2Salt = Uint8Array.from(crypto.createHash("sha256").update(this.passphrase || "").digest());
     return this._pbkdf2Salt;
   }
 
