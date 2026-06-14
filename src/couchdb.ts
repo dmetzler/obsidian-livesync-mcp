@@ -63,9 +63,7 @@ export class CouchDBClient {
   private async getPbkdf2Salt(): Promise<Uint8Array<ArrayBuffer>> {
     if (this._pbkdf2Salt) return this._pbkdf2Salt;
     try {
-      const doc = await this.retry(() =>
-        this.db.get<any>("_local/obsidian_livesync_sync_parameters"),
-      );
+      const doc = await this.retry(() => this.db.get<any>("_local/obsidian_livesync_sync_parameters"));
       if (doc?.pbkdf2salt) {
         const buf = Buffer.from(doc.pbkdf2salt, "base64");
         this._pbkdf2Salt = Uint8Array.from(buf);
@@ -74,7 +72,12 @@ export class CouchDBClient {
     } catch {
       // fall through to default
     }
-    this._pbkdf2Salt = Uint8Array.from(crypto.createHash("sha256").update(this.passphrase || "").digest());
+    this._pbkdf2Salt = Uint8Array.from(
+      crypto
+        .createHash("sha256")
+        .update(this.passphrase || "")
+        .digest(),
+    );
     return this._pbkdf2Salt;
   }
 
@@ -306,7 +309,10 @@ export class CouchDBClient {
           matchCount++;
           if (!contentMatch) {
             contentMatch = true;
-            firstSnippet = contentLines.slice(Math.max(0, i - 1), i + 3).join("\n").slice(0, SNIPPET_LENGTH);
+            firstSnippet = contentLines
+              .slice(Math.max(0, i - 1), i + 3)
+              .join("\n")
+              .slice(0, SNIPPET_LENGTH);
           }
         }
       }
