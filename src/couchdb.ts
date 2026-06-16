@@ -13,7 +13,7 @@ import { EntryTypes } from "@lib/common/models/db.const";
 import type { DocumentID } from "@lib/common/models/db.type";
 import { path2id_base } from "@lib/string_and_binary/path";
 import { enableEncryption } from "@lib/pouchdb/encryption";
-import { E2EEAlgorithms } from "@lib/common/types";
+import type { E2EEAlgorithm } from "@lib/common/types";
 import crypto from "node:crypto";
 
 export interface FileInfo {
@@ -56,7 +56,14 @@ export class CouchDBClient {
     this.requestTimeout = options?.requestTimeout ?? 30000;
 
     if (this.passphrase) {
-      enableEncryption(this.db as any, this.passphrase, false, false, () => this.getPbkdf2Salt(), E2EEAlgorithms.V2);
+      enableEncryption(
+        this.db as any,
+        this.passphrase,
+        false,
+        false,
+        () => this.getPbkdf2Salt(),
+        "V2" as E2EEAlgorithm,
+      );
     }
   }
 
