@@ -1,3 +1,4 @@
+import { version } from "../package.json";
 import type { Logger } from "./logger.js";
 
 export interface HealthStatus {
@@ -23,14 +24,14 @@ export async function checkHealth(couchdbBaseUrl: string, logger: Logger): Promi
       return {
         status: "ok",
         couchdb: "connected",
-        version: "0.1.0",
+        version,
         uptime: Date.now() - startTime,
       };
     }
     return {
       status: "degraded",
       couchdb: "error",
-      version: "0.1.0",
+      version,
       uptime: Date.now() - startTime,
       error: `CouchDB returned ${res.status}`,
     };
@@ -39,7 +40,7 @@ export async function checkHealth(couchdbBaseUrl: string, logger: Logger): Promi
     return {
       status: "error",
       couchdb: "error",
-      version: "0.1.0",
+      version,
       uptime: Date.now() - startTime,
       error: err.message,
     };

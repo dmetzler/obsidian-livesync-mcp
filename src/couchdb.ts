@@ -59,8 +59,8 @@ export class CouchDBClient {
       enableEncryption(
         this.db as any,
         this.passphrase,
-        false,
-        false,
+        false,  // useDynamicIterationCount
+        true,   // migrationDecrypt — decrypt V1-encrypted data too
         () => this.getPbkdf2Salt(),
         "V2" as E2EEAlgorithm,
       );
