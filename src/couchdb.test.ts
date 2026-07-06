@@ -152,14 +152,29 @@ describe("CouchDBClient", () => {
     });
 
     it("throws if target path already exists", async () => {
-      const doc = {
-        _id: "exists.md",
+      const sourceDoc = {
+        _id: "f:hashed_old",
+        type: "plain",
+        path: "old.md",
+        children: ["h:chunk1"],
+        deleted: false,
+      };
+      const targetDoc = {
+        _id: "f:hashed_exists",
         type: "plain",
         path: "exists.md",
         children: [],
         deleted: false,
       };
-      mockDbGet.mockResolvedValue(doc);
+      // db.get returns target doc (for the target existence check)
+      mockDbGet.mockResolvedValue(targetDoc);
+      // allDocs scan for findDocByPath returns the source doc first, then target
+      mockDbAllDocs.mockResolvedValueOnce({
+        rows: [{ doc: sourceDoc, id: "f:hashed_old", key: "f:hashed_old", value: { rev: "1-a" } }],
+      }).mockResolvedValueOnce({
+        // chunks for getFileContent
+        rows: [{ doc: { data: "hello" }, id: "h:chunk1", key: "h:chunk1", value: { rev: "1-b" } }],
+      });
       const { CouchDBClient } = await import("./couchdb.js");
       const client = new CouchDBClient("http://localhost:5984/db", "testphrase");
       await expect(client.renameFile("old.md", "exists.md")).rejects.toThrow("Target path already exists");
@@ -176,12 +191,17 @@ describe("CouchDBClient", () => {
     });
 
     it("returns empty string for file with no children", async () => {
-      mockDbGet.mockResolvedValue({
-        _id: "test-note-md",
+      const doc = {
+        _id: "f:abc123",
         type: "plain",
         path: "note.md",
         children: [],
         deleted: false,
+      };
+      mockDbGet.mockResolvedValue(doc);
+      // allDocs fallback for findDocByPath scan
+      mockDbAllDocs.mockResolvedValue({
+        rows: [{ doc, id: "f:abc123", key: "f:abc123", value: { rev: "1-x" } }],
       });
       const { CouchDBClient } = await import("./couchdb.js");
       const client = new CouchDBClient("http://localhost:5984/db", "testphrase");
