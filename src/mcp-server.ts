@@ -384,12 +384,32 @@ export class MCPServer {
           return;
         }
 
+        // OAuth Protected Resource Metadata (RFC 9728)
+        if (req.method === "GET" && pathname === "/.well-known/oauth-protected-resource") {
+          const issuer = this.opts.config.auth.issuer;
+          const metadata = {
+            resource:
+              this.opts.config.auth.resourceUrl ||
+              `https://${req.headers.host}${url.pathname.replace("/.well-known/oauth-protected-resource", "")}`,
+            authorization_servers: issuer ? [issuer] : [],
+            bearer_methods_supported: ["header"],
+            scopes_supported: ["openid", "profile"],
+          };
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(metadata));
+          return;
+        }
+
         // Authentication
         let authContext: AuthContext = { authenticated: true };
         if (this.auth.isAuthRequired()) {
           authContext = await this.auth.authenticate(req);
           if (!authContext.authenticated) {
-            res.writeHead(401, { "Content-Type": "application/json" });
+            const resourceMetadataUrl = `https://${req.headers.host}/.well-known/oauth-protected-resource`;
+            res.writeHead(401, {
+              "Content-Type": "application/json",
+              "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+            });
             res.end(JSON.stringify({ error: "Unauthorized" }));
             return;
           }

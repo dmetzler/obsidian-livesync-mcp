@@ -25,6 +25,7 @@ const AuthSchema = z.object({
   jwksUri: z.string().url().optional(),
   audience: z.string().optional(),
   vaultsClaim: z.string().default("vaults"),
+  resourceUrl: z.string().url().optional(),
 });
 
 export type AuthConfig = z.infer<typeof AuthSchema>;
