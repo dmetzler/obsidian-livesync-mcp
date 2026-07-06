@@ -7,31 +7,51 @@ import {
   ErrorCode,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { CouchDBClient } from "./couchdb.js";
 import { version } from "../package.json";
 import { checkHealth } from "./health.js";
 import type { Logger } from "./logger.js";
+import type { VaultRegistry } from "./vault-registry.js";
+import { Authenticator, type AuthContext } from "./auth.js";
+import type { AppConfig } from "./config.js";
 import { randomUUID } from "node:crypto";
 
 interface MCPServerOptions {
-  apiKey: string;
-  port: number;
-  couchdbUrl: string;
+  config: AppConfig;
+  registry: VaultRegistry;
   logger: Logger;
 }
 
 interface SessionState {
   transport: import("@modelcontextprotocol/sdk/server/streamableHttp.js").StreamableHTTPServerTransport;
   server: Server;
+  authContext?: AuthContext;
 }
 
+// --- Tool definitions ---
+
+const VAULT_PARAM = {
+  vault: {
+    type: "string",
+    description: "Vault ID (optional if user has access to only one vault)",
+  },
+} as const;
+
 const ALL_TOOLS: Tool[] = [
+  {
+    name: "list_vaults",
+    description: "List available vaults the current user has access to",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
   {
     name: "list_files_in_vault",
     description: "List all files in the vault, optionally filtered by prefix",
     inputSchema: {
       type: "object",
       properties: {
+        ...VAULT_PARAM,
         prefix: { type: "string", description: "Optional path prefix to filter by" },
       },
     },
@@ -42,6 +62,7 @@ const ALL_TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
+        ...VAULT_PARAM,
         path: { type: "string", description: "Directory path" },
       },
       required: ["path"],
@@ -53,6 +74,7 @@ const ALL_TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
+        ...VAULT_PARAM,
         path: { type: "string", description: "File path" },
       },
       required: ["path"],
@@ -61,11 +83,15 @@ const ALL_TOOLS: Tool[] = [
   {
     name: "search",
     description:
-      "Search file names and contents by query string. Returns up to 20 results with snippets. Searches both file paths and content.",
+      "Search file names and contents by query string. Returns up to 20 results with snippets.",
     inputSchema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Search query (case-insensitive, matched against filename and content)" },
+        ...VAULT_PARAM,
+        query: {
+          type: "string",
+          description: "Search query (case-insensitive)",
+        },
       },
       required: ["query"],
     },
@@ -76,6 +102,7 @@ const ALL_TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
+        ...VAULT_PARAM,
         path: { type: "string", description: "File path" },
         content: { type: "string", description: "File content" },
       },
@@ -88,6 +115,7 @@ const ALL_TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
+        ...VAULT_PARAM,
         path: { type: "string", description: "File path" },
         content: { type: "string", description: "Content to append" },
       },
@@ -100,6 +128,7 @@ const ALL_TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
+        ...VAULT_PARAM,
         path: { type: "string", description: "File path" },
         heading: { type: "string", description: "Heading to patch under" },
         content: { type: "string", description: "New content" },
@@ -118,6 +147,7 @@ const ALL_TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
+        ...VAULT_PARAM,
         path: { type: "string", description: "File path" },
       },
       required: ["path"],
@@ -129,6 +159,7 @@ const ALL_TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
+        ...VAULT_PARAM,
         oldPath: { type: "string", description: "Current file path" },
         newPath: { type: "string", description: "New file path" },
       },
@@ -138,21 +169,27 @@ const ALL_TOOLS: Tool[] = [
 ];
 
 export class MCPServer {
-  private client: CouchDBClient;
+  private registry: VaultRegistry;
+  private auth: Authenticator;
   private opts: MCPServerOptions;
   private httpServer: any = null;
   private sessions: Map<string, SessionState> = new Map();
 
-  constructor(client: CouchDBClient, opts: MCPServerOptions) {
-    this.client = client;
+  constructor(opts: MCPServerOptions) {
+    this.registry = opts.registry;
     this.opts = opts;
+    this.auth = new Authenticator(
+      opts.config.auth,
+      opts.config.server.apiKey,
+      opts.logger.child("auth"),
+    );
   }
 
-  private createServer(): Server {
-    const server = new Server({ name: "obsidian-livesync-mcp", version }, { capabilities: { tools: {}, logging: {} } });
-    (server as any).oninitialized = () => {
-      this.opts.logger.info("Client initialized");
-    };
+  private createServer(authContext?: AuthContext): Server {
+    const server = new Server(
+      { name: "obsidian-livesync-mcp", version },
+      { capabilities: { tools: {}, logging: {} } },
+    );
 
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: ALL_TOOLS,
@@ -163,165 +200,167 @@ export class MCPServer {
       const start = Date.now();
       try {
         this.opts.logger.debug("Tool call", { tool: name });
-
-        let result: any;
-        switch (name) {
-          case "list_files_in_vault": {
-            const prefix = args?.prefix as string | undefined;
-            const files = await this.client.listFiles(prefix);
-            result = { content: [{ type: "text", text: JSON.stringify(files, null, 2) }] };
-            break;
-          }
-
-          case "list_files_in_dir": {
-            const path = args?.path as string;
-            const prefix = path.endsWith("/") ? path : path + "/";
-            const files = await this.client.listFiles(prefix);
-            result = { content: [{ type: "text", text: JSON.stringify(files, null, 2) }] };
-            break;
-          }
-
-          case "get_file_contents": {
-            const filePath = args?.path as string;
-            const content = await this.client.getFileContent(filePath);
-            if (content === null) {
-              result = { content: [{ type: "text", text: `File not found: ${filePath}` }], isError: true };
-            } else {
-              result = { content: [{ type: "text", text: content }] };
-            }
-            break;
-          }
-
-          case "search": {
-            const query = args?.query as string;
-            const searchResult = await this.client.search(query);
-            const lines: string[] = [];
-            if (searchResult.results.length === 0) {
-              lines.push("No matches found.");
-            } else {
-              for (const r of searchResult.results) {
-                const tag = r.matchType === "filename" ? "filename" : "content";
-                lines.push(`[${tag}] ${r.path}`);
-                if (r.matchType === "content") {
-                  lines.push(`       ${r.totalMatches} match(es) — snippet: ${r.snippet}`);
-                } else {
-                  lines.push(`       ${r.snippet}`);
-                }
-              }
-              if (searchResult.truncated) {
-                lines.push(
-                  `\n(${searchResult.totalCandidateCount} total candidates — results truncated to ${searchResult.results.length})`,
-                );
-              }
-            }
-            result = { content: [{ type: "text", text: lines.join("\n") }] };
-            break;
-          }
-
-          case "create_note": {
-            const createPath = args?.path as string;
-            const createContent = args?.content as string;
-            await this.client.storeContent(createPath, createContent);
-            result = { content: [{ type: "text", text: `Created: ${createPath}` }] };
-            break;
-          }
-
-          case "append_content": {
-            const appendPath = args?.path as string;
-            const appendContent = args?.content as string;
-            const existing = await this.client.getFileContent(appendPath);
-            if (existing === null) {
-              await this.client.storeContent(appendPath, appendContent);
-            } else {
-              await this.client.storeContent(appendPath, existing + appendContent);
-            }
-            result = { content: [{ type: "text", text: `Content appended to: ${appendPath}` }] };
-            break;
-          }
-
-          case "patch_content": {
-            const patchPath = args?.path as string;
-            const heading = args?.heading as string;
-            const patchContent = args?.content as string;
-            const operation = args?.operation as "replace" | "append" | "prepend";
-
-            const existingContent = await this.client.getFileContent(patchPath);
-            if (existingContent === null) {
-              result = { content: [{ type: "text", text: `File not found: ${patchPath}` }], isError: true };
-              break;
-            }
-
-            const headingRegex = new RegExp(`^(#{1,6})\\s+${escapeRegex(heading)}\\s*$`, "m");
-            const match = existingContent.match(headingRegex);
-            if (!match) {
-              result = { content: [{ type: "text", text: `Heading not found: ${heading}` }], isError: true };
-              break;
-            }
-
-            const headingLine = match[0];
-            const headingLevel = match[1].length;
-            const headingIndex = match.index!;
-            const afterHeading = headingIndex + headingLine.length;
-            const nextHeadingRegex = new RegExp(`^#{1,${headingLevel}}\\s`, "m");
-            const nextMatch = existingContent.slice(afterHeading).match(nextHeadingRegex);
-            const sectionEnd = nextMatch ? afterHeading + nextMatch.index! : existingContent.length;
-
-            let newContent: string;
-            if (operation === "replace") {
-              newContent =
-                existingContent.slice(0, afterHeading) + "\n" + patchContent + "\n" + existingContent.slice(sectionEnd);
-            } else if (operation === "append") {
-              newContent = existingContent.slice(0, sectionEnd) + "\n" + patchContent + "\n";
-            } else {
-              newContent =
-                existingContent.slice(0, afterHeading) +
-                "\n" +
-                patchContent +
-                "\n" +
-                existingContent.slice(afterHeading);
-            }
-
-            await this.client.storeContent(patchPath, newContent);
-            result = { content: [{ type: "text", text: `Patched content under heading: ${heading}` }] };
-            break;
-          }
-
-          case "delete_file": {
-            const deletePath = args?.path as string;
-            const deleted = await this.client.deleteFile(deletePath);
-            if (!deleted) {
-              result = { content: [{ type: "text", text: `File not found: ${deletePath}` }], isError: true };
-            } else {
-              result = { content: [{ type: "text", text: `Deleted: ${deletePath}` }] };
-            }
-            break;
-          }
-
-          case "rename_file": {
-            const oldPath = args?.oldPath as string;
-            const newPath = args?.newPath as string;
-            const renamed = await this.client.renameFile(oldPath, newPath);
-            if (!renamed) {
-              result = { content: [{ type: "text", text: `File not found: ${oldPath}` }], isError: true };
-            } else {
-              result = { content: [{ type: "text", text: `Renamed: ${oldPath} → ${newPath}` }] };
-            }
-            break;
-          }
-
-          default:
-            throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
-        }
-
+        const result = await this.handleTool(name, args || {}, authContext);
         this.opts.logger.info("Tool completed", { tool: name, durationMs: Date.now() - start });
         return result;
       } catch (err: any) {
         this.opts.logger.error("Tool failed", { tool: name, error: err.message, durationMs: Date.now() - start });
-        throw McpError.fromError(ErrorCode.InternalError, err.message);
+        if (err instanceof McpError) throw err;
+        throw new McpError(ErrorCode.InternalError, err.message);
       }
     });
 
     return server;
+  }
+
+  private async handleTool(name: string, args: Record<string, any>, authContext?: AuthContext) {
+    const vaultParam = args.vault as string | undefined;
+    const allowedVaults = authContext?.allowedVaults;
+
+    // list_vaults doesn't need vault resolution
+    if (name === "list_vaults") {
+      const allVaults = this.registry.list();
+      const filtered = allowedVaults
+        ? allVaults.filter((v) => allowedVaults.includes(v.id))
+        : allVaults;
+      return {
+        content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+      };
+    }
+
+    // Resolve vault for all other tools
+    const entry = this.registry.resolve(vaultParam, allowedVaults);
+    const client = entry.client;
+
+    switch (name) {
+      case "list_files_in_vault": {
+        const prefix = args.prefix as string | undefined;
+        const files = await client.listFiles(prefix);
+        return { content: [{ type: "text", text: JSON.stringify(files, null, 2) }] };
+      }
+
+      case "list_files_in_dir": {
+        const path = args.path as string;
+        const prefix = path.endsWith("/") ? path : path + "/";
+        const files = await client.listFiles(prefix);
+        return { content: [{ type: "text", text: JSON.stringify(files, null, 2) }] };
+      }
+
+      case "get_file_contents": {
+        const filePath = args.path as string;
+        const content = await client.getFileContent(filePath);
+        if (content === null) {
+          return { content: [{ type: "text", text: `File not found: ${filePath}` }], isError: true };
+        }
+        return { content: [{ type: "text", text: content }] };
+      }
+
+      case "search": {
+        const query = args.query as string;
+        const searchResult = await client.search(query);
+        const lines: string[] = [];
+        if (searchResult.results.length === 0) {
+          lines.push("No matches found.");
+        } else {
+          for (const r of searchResult.results) {
+            const tag = r.matchType === "filename" ? "filename" : "content";
+            lines.push(`[${tag}] ${r.path}`);
+            if (r.matchType === "content") {
+              lines.push(`       ${r.totalMatches} match(es) — snippet: ${r.snippet}`);
+            } else {
+              lines.push(`       ${r.snippet}`);
+            }
+          }
+          if (searchResult.truncated) {
+            lines.push(
+              `\n(${searchResult.totalCandidateCount} total candidates — results truncated to ${searchResult.results.length})`,
+            );
+          }
+        }
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      case "create_note": {
+        const createPath = args.path as string;
+        const createContent = args.content as string;
+        await client.storeContent(createPath, createContent);
+        return { content: [{ type: "text", text: `Created: ${createPath}` }] };
+      }
+
+      case "append_content": {
+        const appendPath = args.path as string;
+        const appendContent = args.content as string;
+        const existing = await client.getFileContent(appendPath);
+        if (existing === null) {
+          await client.storeContent(appendPath, appendContent);
+        } else {
+          await client.storeContent(appendPath, existing + appendContent);
+        }
+        return { content: [{ type: "text", text: `Content appended to: ${appendPath}` }] };
+      }
+
+      case "patch_content": {
+        const patchPath = args.path as string;
+        const heading = args.heading as string;
+        const patchContent = args.content as string;
+        const operation = args.operation as "replace" | "append" | "prepend";
+
+        const existingContent = await client.getFileContent(patchPath);
+        if (existingContent === null) {
+          return { content: [{ type: "text", text: `File not found: ${patchPath}` }], isError: true };
+        }
+
+        const headingRegex = new RegExp(`^(#{1,6})\\s+${escapeRegex(heading)}\\s*$`, "m");
+        const match = existingContent.match(headingRegex);
+        if (!match) {
+          return { content: [{ type: "text", text: `Heading not found: ${heading}` }], isError: true };
+        }
+
+        const headingLine = match[0];
+        const headingLevel = match[1].length;
+        const headingIndex = match.index!;
+        const afterHeading = headingIndex + headingLine.length;
+        const nextHeadingRegex = new RegExp(`^#{1,${headingLevel}}\\s`, "m");
+        const nextMatch = existingContent.slice(afterHeading).match(nextHeadingRegex);
+        const sectionEnd = nextMatch ? afterHeading + nextMatch.index! : existingContent.length;
+
+        let newContent: string;
+        if (operation === "replace") {
+          newContent =
+            existingContent.slice(0, afterHeading) + "\n" + patchContent + "\n" + existingContent.slice(sectionEnd);
+        } else if (operation === "append") {
+          newContent = existingContent.slice(0, sectionEnd) + "\n" + patchContent + "\n";
+        } else {
+          newContent =
+            existingContent.slice(0, afterHeading) + "\n" + patchContent + "\n" + existingContent.slice(afterHeading);
+        }
+
+        await client.storeContent(patchPath, newContent);
+        return { content: [{ type: "text", text: `Patched content under heading: ${heading}` }] };
+      }
+
+      case "delete_file": {
+        const deletePath = args.path as string;
+        const deleted = await client.deleteFile(deletePath);
+        if (!deleted) {
+          return { content: [{ type: "text", text: `File not found: ${deletePath}` }], isError: true };
+        }
+        return { content: [{ type: "text", text: `Deleted: ${deletePath}` }] };
+      }
+
+      case "rename_file": {
+        const oldPath = args.oldPath as string;
+        const newPath = args.newPath as string;
+        const renamed = await client.renameFile(oldPath, newPath);
+        if (!renamed) {
+          return { content: [{ type: "text", text: `File not found: ${oldPath}` }], isError: true };
+        }
+        return { content: [{ type: "text", text: `Renamed: ${oldPath} → ${newPath}` }] };
+      }
+
+      default:
+        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+    }
   }
 
   async start(transport: "stdio" | "sse" | "http") {
@@ -338,23 +377,32 @@ export class MCPServer {
       this.opts.logger.info("Server started", { transport: "stdio" });
     } else {
       const { createServer } = await import("node:http");
+      const port = this.opts.config.server.port;
 
       this.httpServer = createServer(async (req, res) => {
         const url = new URL(req.url || "/", `http://${req.headers.host}`);
         const pathname = url.pathname;
 
+        // Health check — no auth required
         if (req.method === "GET" && pathname === "/health") {
-          const status = await checkHealth(this.opts.couchdbUrl, this.opts.logger);
+          const firstVault = this.registry.all()[0];
+          const healthUrl = firstVault ? this.registry.getHealthUrl(firstVault.id) : null;
+          const status = await checkHealth(healthUrl || "", this.opts.logger);
           const httpStatus = status.status === "ok" ? 200 : 503;
           res.writeHead(httpStatus, { "Content-Type": "application/json" });
           res.end(JSON.stringify(status));
           return;
         }
 
-        if (this.opts.apiKey && !this.authenticate(req)) {
-          res.writeHead(401, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Unauthorized" }));
-          return;
+        // Authentication
+        let authContext: AuthContext = { authenticated: true };
+        if (this.auth.isAuthRequired()) {
+          authContext = await this.auth.authenticate(req);
+          if (!authContext.authenticated) {
+            res.writeHead(401, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Unauthorized" }));
+            return;
+          }
         }
 
         const sessionId = req.headers["mcp-session-id"] as string | undefined;
@@ -372,12 +420,12 @@ export class MCPServer {
             const { StreamableHTTPServerTransport } =
               await import("@modelcontextprotocol/sdk/server/streamableHttp.js");
 
-            const server = this.createServer();
+            const server = this.createServer(authContext);
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: () => randomUUID(),
               onsessioninitialized: (sid: string) => {
-                this.opts.logger.info("Session initialized", { sessionId: sid });
-                this.sessions.set(sid, { transport, server });
+                this.opts.logger.info("Session initialized", { sessionId: sid, subject: authContext.subject });
+                this.sessions.set(sid, { transport, server, authContext });
               },
             });
             transport.onclose = () => {
@@ -406,10 +454,12 @@ export class MCPServer {
         }
       });
 
-      await new Promise<void>((resolve) => this.httpServer.listen(this.opts.port, resolve));
+      await new Promise<void>((resolve) => this.httpServer.listen(port, resolve));
       this.opts.logger.info("Server started", {
         transport: "streamable-http",
-        port: this.opts.port,
+        port,
+        vaults: this.registry.list().map((v) => v.id),
+        authEnabled: this.auth.isAuthRequired(),
       });
     }
   }
@@ -428,11 +478,6 @@ export class MCPServer {
       await new Promise<void>((resolve) => this.httpServer.close(() => resolve()));
       this.httpServer = null;
     }
-  }
-
-  private authenticate(req: any): boolean {
-    const auth = req.headers?.authorization || "";
-    return auth === `Bearer ${this.opts.apiKey}`;
   }
 }
 

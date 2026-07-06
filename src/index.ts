@@ -1,6 +1,6 @@
 import { loadConfig } from "./config.js";
 import { Logger, setLogLevel } from "./logger.js";
-import { CouchDBClient } from "./couchdb.js";
+import { VaultRegistry } from "./vault-registry.js";
 import { MCPServer } from "./mcp-server.js";
 
 let config;
@@ -11,36 +11,26 @@ try {
   process.exit(1);
 }
 
-setLogLevel(config.logLevel);
+setLogLevel(config.logging.level);
 const log = new Logger("main");
 
-const protocol = config.hostname.startsWith("https://") ? "https" : "http";
-const baseHost = config.hostname.replace(/^https?:\/\//, "");
-const credentials = config.username ? `${config.username}:${encodeURIComponent(config.password)}@` : "";
-const url = `${protocol}://${credentials}${baseHost}/${config.dbname}`;
-const healthCouchdbUrl = `${protocol}://${baseHost}`;
-
 log.info("Config loaded", {
-  hostname: config.hostname,
-  dbname: config.dbname,
-  username: config.username || "(none)",
-  passphrase: config.passphrase ? "***" : "(none)",
-  mcpTransport: config.mcpTransport,
-  mcpPort: config.mcpPort,
-  logLevel: config.logLevel,
-  cacheTtl: config.cacheTtl,
-  requestTimeout: config.requestTimeout,
+  vaults: config.vaults.map((v) => v.id),
+  transport: config.server.transport,
+  port: config.server.port,
+  authEnabled: config.auth.enabled,
+  logLevel: config.logging.level,
   nodeVersion: process.version,
 });
 
-const client = new CouchDBClient(url, config.passphrase, {
-  cacheTtl: config.cacheTtl,
-  requestTimeout: config.requestTimeout,
+const registry = new VaultRegistry(config.vaults, {
+  cacheTtl: config.couchdb.cacheTtl,
+  requestTimeout: config.couchdb.requestTimeout,
 });
-const server = new MCPServer(client, {
-  apiKey: config.mcpApiKey,
-  port: config.mcpPort,
-  couchdbUrl: healthCouchdbUrl,
+
+const server = new MCPServer({
+  config,
+  registry,
   logger: log.child("mcp"),
 });
 
@@ -61,7 +51,7 @@ process.on("unhandledRejection", (err) => {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
-server.start(config.mcpTransport).catch((err) => {
+server.start(config.server.transport).catch((err) => {
   log.error("Failed to start server", { error: err.message });
   process.exit(1);
 });
