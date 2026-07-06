@@ -169,12 +169,14 @@ describe("CouchDBClient", () => {
       // db.get returns target doc (for the target existence check)
       mockDbGet.mockResolvedValue(targetDoc);
       // allDocs scan for findDocByPath returns the source doc first, then target
-      mockDbAllDocs.mockResolvedValueOnce({
-        rows: [{ doc: sourceDoc, id: "f:hashed_old", key: "f:hashed_old", value: { rev: "1-a" } }],
-      }).mockResolvedValueOnce({
-        // chunks for getFileContent
-        rows: [{ doc: { data: "hello" }, id: "h:chunk1", key: "h:chunk1", value: { rev: "1-b" } }],
-      });
+      mockDbAllDocs
+        .mockResolvedValueOnce({
+          rows: [{ doc: sourceDoc, id: "f:hashed_old", key: "f:hashed_old", value: { rev: "1-a" } }],
+        })
+        .mockResolvedValueOnce({
+          // chunks for getFileContent
+          rows: [{ doc: { data: "hello" }, id: "h:chunk1", key: "h:chunk1", value: { rev: "1-b" } }],
+        });
       const { CouchDBClient } = await import("./couchdb.js");
       const client = new CouchDBClient("http://localhost:5984/db", "testphrase");
       await expect(client.renameFile("old.md", "exists.md")).rejects.toThrow("Target path already exists");

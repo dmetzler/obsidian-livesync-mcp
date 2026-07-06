@@ -34,18 +34,27 @@ export type AuthConfig = z.infer<typeof AuthSchema>;
 const MultiVaultConfigSchema = z.object({
   vaults: z.array(VaultSchema).min(1),
   auth: AuthSchema.optional().default({ enabled: false }),
-  server: z.object({
-    transport: z.enum(["stdio", "sse", "http"]).default("http"),
-    port: z.coerce.number().int().positive().default(3100),
-    apiKey: z.string().default(""),
-  }).optional().default({}),
-  logging: z.object({
-    level: z.enum(["debug", "info", "warn", "error"]).default("info"),
-  }).optional().default({}),
-  couchdb: z.object({
-    cacheTtl: z.coerce.number().int().nonnegative().default(60),
-    requestTimeout: z.coerce.number().int().positive().default(30000),
-  }).optional().default({}),
+  server: z
+    .object({
+      transport: z.enum(["stdio", "sse", "http"]).default("http"),
+      port: z.coerce.number().int().positive().default(3100),
+      apiKey: z.string().default(""),
+    })
+    .optional()
+    .default({}),
+  logging: z
+    .object({
+      level: z.enum(["debug", "info", "warn", "error"]).default("info"),
+    })
+    .optional()
+    .default({}),
+  couchdb: z
+    .object({
+      cacheTtl: z.coerce.number().int().nonnegative().default(60),
+      requestTimeout: z.coerce.number().int().positive().default(30000),
+    })
+    .optional()
+    .default({}),
 });
 
 export type MultiVaultConfig = z.infer<typeof MultiVaultConfigSchema>;
@@ -110,10 +119,7 @@ export function loadConfig(): AppConfig {
 }
 
 function findConfigFile(): string | null {
-  const candidates = [
-    resolve(process.cwd(), "vaults.json"),
-    resolve("/etc/obsidian-mcp/vaults.json"),
-  ];
+  const candidates = [resolve(process.cwd(), "vaults.json"), resolve("/etc/obsidian-mcp/vaults.json")];
   for (const p of candidates) {
     if (existsSync(p)) return p;
   }

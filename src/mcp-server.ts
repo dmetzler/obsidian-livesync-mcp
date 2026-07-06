@@ -82,8 +82,7 @@ const ALL_TOOLS: Tool[] = [
   },
   {
     name: "search",
-    description:
-      "Search file names and contents by query string. Returns up to 20 results with snippets.",
+    description: "Search file names and contents by query string. Returns up to 20 results with snippets.",
     inputSchema: {
       type: "object",
       properties: {
@@ -178,18 +177,11 @@ export class MCPServer {
   constructor(opts: MCPServerOptions) {
     this.registry = opts.registry;
     this.opts = opts;
-    this.auth = new Authenticator(
-      opts.config.auth,
-      opts.config.server.apiKey,
-      opts.logger.child("auth"),
-    );
+    this.auth = new Authenticator(opts.config.auth, opts.config.server.apiKey, opts.logger.child("auth"));
   }
 
   private createServer(authContext?: AuthContext): Server {
-    const server = new Server(
-      { name: "obsidian-livesync-mcp", version },
-      { capabilities: { tools: {}, logging: {} } },
-    );
+    const server = new Server({ name: "obsidian-livesync-mcp", version }, { capabilities: { tools: {}, logging: {} } });
 
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: ALL_TOOLS,
@@ -220,9 +212,7 @@ export class MCPServer {
     // list_vaults doesn't need vault resolution
     if (name === "list_vaults") {
       const allVaults = this.registry.list();
-      const filtered = allowedVaults
-        ? allVaults.filter((v) => allowedVaults.includes(v.id))
-        : allVaults;
+      const filtered = allowedVaults ? allVaults.filter((v) => allowedVaults.includes(v.id)) : allVaults;
       return {
         content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
       };

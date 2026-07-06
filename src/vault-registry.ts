@@ -11,10 +11,7 @@ export interface VaultEntry {
 export class VaultRegistry {
   private vaults: Map<string, VaultEntry> = new Map();
 
-  constructor(
-    vaultConfigs: VaultConfig[],
-    options: { cacheTtl: number; requestTimeout: number },
-  ) {
+  constructor(vaultConfigs: VaultConfig[], options: { cacheTtl: number; requestTimeout: number }) {
     for (const vc of vaultConfigs) {
       const url = this.buildCouchUrl(vc);
       const client = new CouchDBClient(url, vc.passphrase || undefined, {
@@ -59,9 +56,7 @@ export class VaultRegistry {
    */
   resolve(explicitVault?: string, allowedVaults?: string[]): VaultEntry {
     // Filter to only allowed vaults
-    const available = allowedVaults
-      ? this.all().filter((v) => allowedVaults.includes(v.id))
-      : this.all();
+    const available = allowedVaults ? this.all().filter((v) => allowedVaults.includes(v.id)) : this.all();
 
     if (available.length === 0) {
       throw new Error("No vaults available for your account.");
@@ -72,9 +67,7 @@ export class VaultRegistry {
       const entry = available.find((v) => v.id === explicitVault);
       if (!entry) {
         const ids = available.map((v) => v.id).join(", ");
-        throw new Error(
-          `Vault "${explicitVault}" not found or not authorized. Available: ${ids}`,
-        );
+        throw new Error(`Vault "${explicitVault}" not found or not authorized. Available: ${ids}`);
       }
       return entry;
     }
@@ -103,9 +96,7 @@ export class VaultRegistry {
   private buildCouchUrl(vc: VaultConfig): string {
     const protocol = vc.hostname.startsWith("https://") ? "https" : "http";
     const baseHost = vc.hostname.replace(/^https?:\/\//, "");
-    const credentials = vc.username
-      ? `${vc.username}:${encodeURIComponent(vc.password)}@`
-      : "";
+    const credentials = vc.username ? `${vc.username}:${encodeURIComponent(vc.password)}@` : "";
     return `${protocol}://${credentials}${baseHost}/${vc.dbname}`;
   }
 }

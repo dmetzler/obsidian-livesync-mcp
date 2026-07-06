@@ -54,7 +54,9 @@ export class CouchDBClient {
   private cacheTtl: number;
   private requestTimeout: number;
   private cachedSalt: Uint8Array<ArrayBuffer> | null = null;
-  private decryptHKDF: ((input: string, passphrase: string, salt: Uint8Array<ArrayBufferLike>) => Promise<string>) | null = null;
+  private decryptHKDF:
+    | ((input: string, passphrase: string, salt: Uint8Array<ArrayBufferLike>) => Promise<string>)
+    | null = null;
 
   constructor(url: string, passphrase?: string, options?: CouchDBOptions) {
     this.db = new PouchDB(url, { adapter: "http" });
@@ -63,10 +65,16 @@ export class CouchDBClient {
     this.requestTimeout = options?.requestTimeout ?? 30000;
   }
 
-  private async getDecryptFn(): Promise<(input: string, passphrase: string, salt: Uint8Array<ArrayBufferLike>) => Promise<string>> {
+  private async getDecryptFn(): Promise<
+    (input: string, passphrase: string, salt: Uint8Array<ArrayBufferLike>) => Promise<string>
+  > {
     if (!this.decryptHKDF) {
       const mod = await import("octagonal-wheels/encryption/hkdf");
-      this.decryptHKDF = mod.decrypt as (input: string, passphrase: string, salt: Uint8Array<ArrayBufferLike>) => Promise<string>;
+      this.decryptHKDF = mod.decrypt as (
+        input: string,
+        passphrase: string,
+        salt: Uint8Array<ArrayBufferLike>,
+      ) => Promise<string>;
     }
     return this.decryptHKDF!;
   }
@@ -413,14 +421,14 @@ export class CouchDBClient {
           let snippet = "";
           try {
             if (meta.children.length > 0) {
-              const chunks = await this.retry(() =>
-                this.db.allDocs<any>({ keys: meta.children, include_docs: true }),
-              );
+              const chunks = await this.retry(() => this.db.allDocs<any>({ keys: meta.children, include_docs: true }));
               for (const r of chunks.rows) {
                 if ("doc" in r && r.doc?.data) snippet += await this.decryptChunkData(r.doc.data);
               }
             }
-          } catch { /* skip */ }
+          } catch {
+            /* skip */
+          }
           results.push({
             path: meta.path,
             snippet: snippet.slice(0, SNIPPET_LENGTH).replace(/\n/g, " "),
@@ -436,9 +444,7 @@ export class CouchDBClient {
 
       let content = "";
       try {
-        const chunks = await this.retry(() =>
-          this.db.allDocs<any>({ keys: meta.children, include_docs: true }),
-        );
+        const chunks = await this.retry(() => this.db.allDocs<any>({ keys: meta.children, include_docs: true }));
         for (const r of chunks.rows) {
           if ("doc" in r && r.doc?.data) content += await this.decryptChunkData(r.doc.data);
         }

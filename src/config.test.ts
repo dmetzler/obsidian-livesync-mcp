@@ -71,7 +71,11 @@ describe("Config loading", () => {
     const configPath = resolve("/tmp/test-vaults.json");
 
     beforeEach(() => {
-      try { unlinkSync(configPath); } catch { /* ignore */ }
+      try {
+        unlinkSync(configPath);
+      } catch {
+        /* ignore */
+      }
     });
 
     it("loads multi-vault config from JSON file", async () => {
