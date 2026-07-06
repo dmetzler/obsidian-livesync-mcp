@@ -1,0 +1,43 @@
+{
+  "vaults": [
+    {
+      "id": "damiensnote-db",
+      "label": "Damien's Vault",
+      "hostname": "https://couch.home.metzlerfamily.fr",
+      "dbname": "damiensnote-db",
+      "username": "admin",
+      "password": "changeme",
+      "passphrase": "your-e2ee-passphrase",
+      "allowedSubjects": ["damien", "jarvis"]
+    },
+    {
+      "id": "juliette-db",
+      "label": "Juliette's Vault",
+      "hostname": "https://couch.home.metzlerfamily.fr",
+      "dbname": "juliette-db",
+      "username": "admin",
+      "password": "changeme",
+      "passphrase": "different-passphrase",
+      "allowedSubjects": ["juliette"]
+    }
+  ],
+  "auth": {
+    "enabled": true,
+    "issuer": "https://home.metzlerfamily.fr/keycloak/realms/homelab",
+    "jwksUri": "https://home.metzlerfamily.fr/keycloak/realms/homelab/protocol/openid-connect/certs",
+    "audience": "obsidian-mcp",
+    "vaultsClaim": "vaults"
+  },
+  "server": {
+    "transport": "http",
+    "port": 3100,
+    "apiKey": ""
+  },
+  "logging": {
+    "level": "info"
+  },
+  "couchdb": {
+    "cacheTtl": 60,
+    "requestTimeout": 30000
+  }
+}
