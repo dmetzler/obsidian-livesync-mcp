@@ -10,6 +10,7 @@ PouchDB.plugin(transformPouch);
 
 import { IDPrefixes } from "@lib/common/models/shared.const.behabiour";
 import { EntryTypes } from "@lib/common/models/db.const";
+import { decrypt as decryptHKDFImport, encrypt as encryptHKDFImport } from "octagonal-wheels/encryption/hkdf";
 import type { DocumentID } from "@lib/common/models/db.type";
 import { path2id_base } from "@lib/string_and_binary/path";
 import crypto from "node:crypto";
@@ -56,26 +57,20 @@ export class CouchDBClient {
   private cachedSalt: Uint8Array<ArrayBuffer> | null = null;
   private decryptHKDF:
     | ((input: string, passphrase: string, salt: Uint8Array<ArrayBufferLike>) => Promise<string>)
-    | null = null;
+    | null = decryptHKDFImport as any;
+  private logger: any;
 
-  constructor(url: string, passphrase?: string, options?: CouchDBOptions) {
+  constructor(url: string, passphrase?: string, options?: CouchDBOptions & { logger?: any }) {
     this.db = new PouchDB(url, { adapter: "http" });
     this.passphrase = passphrase;
     this.cacheTtl = options?.cacheTtl ?? 60;
     this.requestTimeout = options?.requestTimeout ?? 30000;
+    this.logger = options?.logger;
   }
 
   private async getDecryptFn(): Promise<
     (input: string, passphrase: string, salt: Uint8Array<ArrayBufferLike>) => Promise<string>
   > {
-    if (!this.decryptHKDF) {
-      const mod = await import("octagonal-wheels/encryption/hkdf");
-      this.decryptHKDF = mod.decrypt as (
-        input: string,
-        passphrase: string,
-        salt: Uint8Array<ArrayBufferLike>,
-      ) => Promise<string>;
-    }
     return this.decryptHKDF!;
   }
 
@@ -131,7 +126,8 @@ export class CouchDBClient {
         ctime: parsed.ctime || 0,
         size: parsed.size || 0,
       };
-    } catch {
+    } catch (e: any) {
+      this.logger?.debug?.("decryptMeta failed", { docId: doc._id, error: e?.message?.slice(0, 100) });
       return null;
     }
   }
@@ -262,9 +258,8 @@ export class CouchDBClient {
       // Store chunk (encrypted if E2EE is enabled)
       let chunkData = content;
       if (this.passphrase) {
-        const { encrypt: encryptHKDF } = await import("octagonal-wheels/encryption/hkdf");
         const salt = await this.getPbkdf2Salt();
-        chunkData = await encryptHKDF(content, this.passphrase, salt);
+        chunkData = await encryptHKDFImport(content, this.passphrase, salt);
       }
 
       const chunkBody: Record<string, any> = {
@@ -295,9 +290,8 @@ export class CouchDBClient {
       // Encrypt metadata into path field
       let storedPath: string = path;
       if (this.passphrase) {
-        const { encrypt: encryptHKDF } = await import("octagonal-wheels/encryption/hkdf");
         const salt = await this.getPbkdf2Salt();
-        const encrypted = await encryptHKDF(JSON.stringify(metaPayload), this.passphrase, salt);
+        const encrypted = await encryptHKDFImport(JSON.stringify(metaPayload), this.passphrase, salt);
         storedPath = ENCRYPTED_META_PREFIX + encrypted;
       }
 
