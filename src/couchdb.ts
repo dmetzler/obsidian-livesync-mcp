@@ -213,7 +213,10 @@ export class CouchDBClient {
       const doc = await this.retry(() => this.db.get<any>(docId));
       if (doc.deleted || doc._deleted) return null;
       const meta = await this.decryptMeta(doc);
-      if (meta && meta.path.toLowerCase() === path.toLowerCase()) return meta;
+      if (meta && meta.path.toLowerCase() === path.toLowerCase()) {
+        (meta as any)._docId = docId;
+        return meta;
+      }
     } catch (err: any) {
       if (err.status !== 404) throw err;
     }
@@ -232,7 +235,10 @@ export class CouchDBClient {
       const doc = row.doc;
       if (doc.type !== EntryTypes.NOTE_PLAIN && doc.type !== EntryTypes.NOTE_BINARY) continue;
       const meta = await this.decryptMeta(doc);
-      if (meta && meta.path.toLowerCase() === path.toLowerCase()) return meta;
+      if (meta && meta.path.toLowerCase() === path.toLowerCase()) {
+        (meta as any)._docId = doc._id;
+        return meta;
+      }
     }
 
     return null;
@@ -240,20 +246,29 @@ export class CouchDBClient {
 
   async storeContent(path: string, content: string): Promise<boolean> {
     try {
-      const docId = await this.pathToId(path);
-      const chunkHash = crypto.createHash("sha256").update(content).digest("hex");
-      const chunkId = this.passphrase ? `${IDPrefixes.EncryptedChunk}${chunkHash}` : `${IDPrefixes.Chunk}${chunkHash}`;
-
+      // First, try to find the existing doc by decrypted path (handles path mismatches)
+      const existingByPath = await this.findDocByPath(path);
+      let docId: string;
       let existingMeta: any = null;
       let oldChildren: string[] = [];
-      try {
-        existingMeta = await this.retry(() => this.db.get(docId));
-        // Get old children from encrypted metadata
-        const meta = await this.decryptMeta(existingMeta);
-        oldChildren = meta?.children || [];
-      } catch {
-        // new file
+
+      if (existingByPath) {
+        // Found existing doc — use its actual ID to update in place
+        docId = (existingByPath as any)._docId;
+        try {
+          existingMeta = await this.retry(() => this.db.get(docId));
+          oldChildren = existingByPath.children || [];
+        } catch {
+          // Doc disappeared between find and get — treat as new
+          docId = await this.pathToId(path);
+        }
+      } else {
+        // New file — compute ID from path
+        docId = await this.pathToId(path);
       }
+
+      const chunkHash = crypto.createHash("sha256").update(content).digest("hex");
+      const chunkId = this.passphrase ? `${IDPrefixes.EncryptedChunk}${chunkHash}` : `${IDPrefixes.Chunk}${chunkHash}`;
 
       // Store chunk (encrypted if E2EE is enabled)
       let chunkData = content;
@@ -279,8 +294,11 @@ export class CouchDBClient {
       const now = Date.now();
       const storeCtime = existingMeta ? (await this.decryptMeta(existingMeta))?.ctime || now : now;
 
+      // Use the original path from the existing doc to maintain consistency
+      const effectivePath = existingByPath ? existingByPath.path : path;
+
       const metaPayload: DecryptedMeta = {
-        path: path,
+        path: effectivePath,
         children: [chunkId],
         ctime: storeCtime,
         mtime: now,
@@ -288,7 +306,7 @@ export class CouchDBClient {
       };
 
       // Encrypt metadata into path field
-      let storedPath: string = path;
+      let storedPath: string = effectivePath;
       if (this.passphrase) {
         const salt = await this.getPbkdf2Salt();
         const encrypted = await encryptHKDFImport(JSON.stringify(metaPayload), this.passphrase, salt);
@@ -298,7 +316,7 @@ export class CouchDBClient {
       const entry: any = {
         _id: docId,
         type: EntryTypes.NOTE_PLAIN,
-        path: this.passphrase ? storedPath : path,
+        path: this.passphrase ? storedPath : effectivePath,
         children: this.passphrase ? [] : [chunkId],
         ctime: this.passphrase ? 0 : storeCtime,
         mtime: this.passphrase ? 0 : now,
